@@ -1,4 +1,4 @@
-/* global OffscreenCanvas */
+/* global OffscreenCanvas, window, navigator, VRFrameData */
 
 import {
   createGLContext,
@@ -12,6 +12,8 @@ import {log} from '../utils';
 import assert from '../utils/assert';
 import {Stats} from 'probe.gl';
 import {Query} from '../webgl';
+import {withParameters} from '../webgl/context';
+import {createEnterVRButton} from '../utils/webvr';
 
 // TODO - remove dependency on webgl classes
 import {Framebuffer} from '../webgl';
@@ -28,6 +30,7 @@ export default class AnimationLoop {
       onAddHTML = null,
       onInitialize = () => {},
       onRender = () => {},
+      onRenderFrame = null,
       onFinalize = () => {},
 
       gl = null,
@@ -54,6 +57,7 @@ export default class AnimationLoop {
       onAddHTML,
       onInitialize,
       onRender,
+      onRenderFrame,
       onFinalize,
 
       gl,
@@ -167,7 +171,7 @@ export default class AnimationLoop {
     this._updateCallbackData();
 
     // call callback
-    this.onRender(this.animationProps);
+    this.onRenderFrame(this.animationProps);
     // end callback
 
     // clear needsRedraw flag
@@ -234,12 +238,120 @@ export default class AnimationLoop {
     return this.props.onInitialize(...args);
   }
 
+  onRenderFrame(...args) {
+    if (this.props.onRenderFrame) {
+      return this.props.onRenderFrame(...args);
+    }
+
+    const opts = args[0];
+    const {gl, width, height, _vr: vr} = opts;
+
+    if (vr) {
+      vr.display.getFrameData(vr.frameData);
+
+      const {
+        leftProjectionMatrix,
+        leftViewMatrix,
+        rightProjectionMatrix,
+        rightViewMatrix
+      } = vr.frameData;
+
+      const leftEyeParams = Object.assign({}, opts, {
+        vrEye: 'left',
+        vrProjectionMatrix: leftProjectionMatrix,
+        vrViewMatrix: leftViewMatrix
+      });
+      withParameters(
+        gl,
+        {
+          viewport: [0, 0, width * 0.5, height],
+          scissor: [0, 0, width * 0.5, height],
+          scissorTest: true
+        },
+        () => this.onRender(leftEyeParams)
+      );
+
+      const rightEyeParams = Object.assign({}, opts, {
+        vrEye: 'right',
+        vrProjectionMatrix: rightProjectionMatrix,
+        vrViewMatrix: rightViewMatrix
+      });
+      withParameters(
+        gl,
+        {
+          viewport: [width * 0.5, 0, width * 0.5, height],
+          scissor: [width * 0.5, 0, width * 0.5, height],
+          scissorTest: true
+        },
+        () => this.onRender(rightEyeParams)
+      );
+
+      vr.display.submitFrame();
+    } else {
+      gl.viewport(0, 0, width, height);
+      this.onRender(opts);
+    }
+
+    return true;
+  }
+
   onRender(...args) {
     return this.props.onRender(...args);
   }
 
   onFinalize(...args) {
     return this.props.onFinalize(...args);
+  }
+
+  async enableWebVR() {
+    if (!('getVRDisplays' in navigator)) {
+      return false;
+    }
+
+    const displays = await navigator.getVRDisplays();
+    if (displays && displays.length) {
+      log.info(2, 'Found VR Displays', displays)();
+      // TODO: Consider resizing canvas to match vrDisplay.getEyeParameters()
+
+      this.vrDisplay = displays[0];
+      this.vrPresenting = false;
+      this.vrButton = createEnterVRButton({
+        canvas: this.gl.canvas,
+        title: `Enter VR (${this.vrDisplay.displayName})`
+      });
+      this.vrButton.onclick = () => this.enterWebVR();
+
+      window.addEventListener('vrdisplaypresentchange', () => {
+        if (this.vrDisplay.isPresenting) {
+          log.info(2, 'Entering VR')();
+
+          this.animationProps._vr = {
+            display: this.vrDisplay,
+            frameData: new VRFrameData()
+          };
+          this.vrPresenting = true;
+          this.vrButton.style.display = 'none';
+        } else {
+          log.info(2, 'Exiting VR')();
+
+          this.animationProps._vr = null;
+          this.vrPresenting = false;
+          this.vrButton.style.display = 'block';
+        }
+      });
+
+      return true;
+    }
+
+    return false;
+  }
+
+  enterWebVR() {
+    this.vrDisplay.requestPresent([
+      {
+        source: this.gl.canvas
+      }
+    ]);
   }
 
   // DEPRECATED/REMOVED METHODS
@@ -268,12 +380,16 @@ export default class AnimationLoop {
         this._nextFramePromise = null;
         this._resolveNextFrame = null;
       }
-      this._animationFrameId = requestAnimationFrame(renderFrame);
+      this._animationFrameId = requestAnimationFrame(renderFrame, this._animationFrameDevice());
     };
 
     // cancel any pending renders to ensure only one loop can ever run
     cancelAnimationFrame(this._animationFrameId);
-    this._animationFrameId = requestAnimationFrame(renderFrame);
+    this._animationFrameId = requestAnimationFrame(renderFrame, this._animationFrameDevice());
+  }
+
+  _animationFrameDevice() {
+    return this.vrPresenting ? this.vrDisplay : window;
   }
 
   _clearNeedsRedraw() {

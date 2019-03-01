@@ -105,6 +105,7 @@ class AppAnimationLoop extends AnimationLoop {
   }
 
   onInitialize({gl, _animationLoop}) {
+    _animationLoop.enableWebVR();
 
     setParameters(gl, {
       clearColor: [0, 0, 0, 1],
@@ -146,7 +147,7 @@ class AppAnimationLoop extends AnimationLoop {
 
   onRender(animationProps) {
 
-    const {gl, framebuffer, useDevicePixels, _mousePosition, statsWidget, tick} = animationProps;
+    const {gl, framebuffer, useDevicePixels, _mousePosition, statsWidget, tick, vrViewMatrix, vrProjectionMatrix} = animationProps;
 
     if (tick % 60 === 10) {
       statsWidget.update();
@@ -171,6 +172,12 @@ class AppAnimationLoop extends AnimationLoop {
 
     // Draw the cubes
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    if (vrViewMatrix && vrProjectionMatrix) {
+      this.cube.setUniforms({
+        uView: new Matrix4(Array.from(vrViewMatrix)),
+        uProjection: new Matrix4(Array.from(vrProjectionMatrix))
+      });
+    }
     this.cube.draw();
   }
 
