@@ -2,6 +2,10 @@
 
 ## Version 7.x
 
+### WebVR Support
+
+Just call `animationLoop.enableWebVR()`. Works with [Firefox Reality](https://mixedreality.mozilla.org/firefox-reality/).
+
 ### "Asynchronous" Textures
 
 The `Texture` class now supports image data being initialized with a URL `string` or a `Promise`that resolves to any of the previously valid data types, e.g. an `Image` instance. This avoids the need to clutter your code with `promise.then()` and/or callback functions just to load textures.
